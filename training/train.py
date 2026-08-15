@@ -65,14 +65,21 @@ def make_vec_env(n_envs: int, num_players_range, opponent_pool: list, base_seed:
 
 
 def train(total_timesteps: int, n_envs: int = 8, num_players_range=(2, 6), out_dir: str = "models",
-          checkpoint_every: int = 50_000, self_play_every: int = 0, eval_every: int = 100_000,
-          eval_hands: int = 500, seed: int = 0, tensorboard_log: str = None, resume_from: str = None):
+          checkpoint_every: int = 50_000, self_play_every: int = 0, self_play_pool_cap: int = 6,
+          eval_every: int = 100_000, eval_hands: int = 500, seed: int = 0, tensorboard_log: str = None,
+          resume_from: str = None):
     """Train (or resume training) a MaskablePPO policy.
 
     `total_timesteps` is always the absolute target for `model.num_timesteps`
     -- when resuming, training runs until the real step count (not the
     number of *additional* steps) reaches it, so re-running with the same
     `--timesteps` after an interruption just picks up where it left off.
+
+    `self_play_pool_cap` bounds how many frozen self-play snapshots can
+    accumulate in the opponent pool (oldest evicted first): with no cap, a
+    long run keeps adding snapshots forever, and since every snapshot opponent
+    runs full NN inference (unlike the cheap random/rule-based agents), an
+    ever-growing pool would steadily and unboundedly slow down training.
     """
     os.makedirs(out_dir, exist_ok=True)
 
@@ -97,6 +104,16 @@ def train(total_timesteps: int, n_envs: int = 8, num_players_range=(2, 6), out_d
     next_self_play = _next_multiple_after(model.num_timesteps, self_play_every)
     next_eval = _next_multiple_after(model.num_timesteps, eval_every)
 
+    # Cap each learn() call at the *smallest* active interval so checkpoints/
+    # self-play snapshots/evals normally land at meaningfully different
+    # points in training, not all backdated onto the same end-of-chunk model
+    # state. This is a best effort, not a guarantee: PPO only checks progress
+    # between whole rollouts (n_steps * n_envs), so a single call can still
+    # overshoot past more than one interval if an interval is set smaller
+    # than one rollout -- see the while-loops below for why that stays correct.
+    active_intervals = [x for x in (checkpoint_every, self_play_every, eval_every) if x]
+    step_interval = min(active_intervals) if active_intervals else total_timesteps
+
     while model.num_timesteps < total_timesteps:
         # MaskablePPO.learn(total_timesteps=N, reset_num_timesteps=False)
         # runs N *more* steps from model.num_timesteps -- but only in whole
@@ -104,26 +121,42 @@ def train(total_timesteps: int, n_envs: int = 8, num_players_range=(2, 6), out_d
         # Track progress off model.num_timesteps (the real counter), not a
         # separately incremented one, or this loop keeps requesting chunks
         # long after the real step count has already passed total_timesteps.
-        chunk = min(checkpoint_every, total_timesteps - model.num_timesteps) if checkpoint_every else total_timesteps
+        chunk = min(step_interval, total_timesteps - model.num_timesteps)
         model.learn(total_timesteps=chunk, reset_num_timesteps=False)
         done_steps = model.num_timesteps
 
+        # Each action below fires at most once per learn() call (there's
+        # only one current model state to checkpoint/snapshot/evaluate,
+        # however many interval boundaries got crossed) but the `while`
+        # advances the pointer past *every* crossed boundary -- otherwise,
+        # if a single call jumps past more than one interval, the pointer
+        # would only move past one and immediately re-fire next iteration.
         if checkpoint_every and done_steps >= next_checkpoint:
             path = os.path.join(out_dir, f"checkpoint_{done_steps}")
             model.save(path)
             print(f"[{done_steps}] checkpoint saved -> {path}.zip")
-            next_checkpoint += checkpoint_every
+            while done_steps >= next_checkpoint:
+                next_checkpoint += checkpoint_every
 
         if self_play_every and done_steps >= next_self_play:
+            # Mutate opponent_pool in place (pop/append), never rebind it:
+            # every sub-environment holds a reference to this exact list
+            # object, and reassigning it here wouldn't reach them.
+            if self_play_pool_cap:
+                snapshot_indices = [i for i, a in enumerate(opponent_pool) if isinstance(a, _LiveModelAgent)]
+                while len(snapshot_indices) >= self_play_pool_cap:
+                    opponent_pool.pop(snapshot_indices.pop(0))
             opponent_pool.append(_LiveModelAgent(model))
             print(f"[{done_steps}] added self-play snapshot to opponent pool (pool size={len(opponent_pool)})")
-            next_self_play += self_play_every
+            while done_steps >= next_self_play:
+                next_self_play += self_play_every
 
         if eval_every and done_steps >= next_eval:
             stats = evaluate_agent(_LiveModelAgent(model, deterministic=True), n_hands=eval_hands,
                                     num_players_range=num_players_range, seed=seed)
             print(f"[{done_steps}] eval vs baseline pool: {stats}")
-            next_eval += eval_every
+            while done_steps >= next_eval:
+                next_eval += eval_every
 
     final_path = os.path.join(out_dir, "final_model")
     model.save(final_path)
@@ -141,6 +174,8 @@ def _parse_args():
     parser.add_argument("--checkpoint-every", type=int, default=50_000)
     parser.add_argument("--self-play-every", type=int, default=0,
                         help="Add a frozen self-play snapshot to the opponent pool every N steps (0=off)")
+    parser.add_argument("--self-play-pool-cap", type=int, default=6,
+                        help="Max self-play snapshots kept in the pool at once (oldest evicted first, 0=unbounded)")
     parser.add_argument("--eval-every", type=int, default=100_000)
     parser.add_argument("--eval-hands", type=int, default=500)
     parser.add_argument("--seed", type=int, default=0)
@@ -155,5 +190,6 @@ if __name__ == "__main__":
     train(total_timesteps=args.timesteps, n_envs=args.n_envs,
           num_players_range=(args.min_players, args.max_players), out_dir=args.out_dir,
           checkpoint_every=args.checkpoint_every, self_play_every=args.self_play_every,
-          eval_every=args.eval_every, eval_hands=args.eval_hands, seed=args.seed,
-          tensorboard_log=args.tensorboard_log, resume_from=args.resume_from)
+          self_play_pool_cap=args.self_play_pool_cap, eval_every=args.eval_every,
+          eval_hands=args.eval_hands, seed=args.seed, tensorboard_log=args.tensorboard_log,
+          resume_from=args.resume_from)
