@@ -66,7 +66,14 @@ def make_vec_env(n_envs: int, num_players_range, opponent_pool: list, base_seed:
 
 def train(total_timesteps: int, n_envs: int = 8, num_players_range=(2, 6), out_dir: str = "models",
           checkpoint_every: int = 50_000, self_play_every: int = 0, eval_every: int = 100_000,
-          eval_hands: int = 500, seed: int = 0, tensorboard_log: str = None):
+          eval_hands: int = 500, seed: int = 0, tensorboard_log: str = None, resume_from: str = None):
+    """Train (or resume training) a MaskablePPO policy.
+
+    `total_timesteps` is always the absolute target for `model.num_timesteps`
+    -- when resuming, training runs until the real step count (not the
+    number of *additional* steps) reaches it, so re-running with the same
+    `--timesteps` after an interruption just picks up where it left off.
+    """
     os.makedirs(out_dir, exist_ok=True)
 
     # A single shared list: appending a self-play snapshot to it is
@@ -75,17 +82,31 @@ def train(total_timesteps: int, n_envs: int = 8, num_players_range=(2, 6), out_d
     opponent_pool = default_opponent_pool()
 
     vec_env = make_vec_env(n_envs, num_players_range, opponent_pool, base_seed=seed)
-    model = MaskablePPO("MlpPolicy", vec_env, verbose=1, seed=seed, tensorboard_log=tensorboard_log)
+    if resume_from:
+        model = MaskablePPO.load(resume_from, env=vec_env)
+        print(f"Resumed from {resume_from} at step {model.num_timesteps}")
+    else:
+        model = MaskablePPO("MlpPolicy", vec_env, verbose=1, seed=seed, tensorboard_log=tensorboard_log)
 
-    done_steps = 0
-    next_checkpoint = checkpoint_every
-    next_self_play = self_play_every
-    next_eval = eval_every
+    # Resuming partway through: the next checkpoint/self-play/eval point is
+    # the next multiple of its interval *after* the current step, not 0.
+    def _next_multiple_after(step, interval):
+        return (step // interval + 1) * interval if interval else None
 
-    while done_steps < total_timesteps:
-        chunk = min(checkpoint_every, total_timesteps - done_steps) if checkpoint_every else total_timesteps
+    next_checkpoint = _next_multiple_after(model.num_timesteps, checkpoint_every)
+    next_self_play = _next_multiple_after(model.num_timesteps, self_play_every)
+    next_eval = _next_multiple_after(model.num_timesteps, eval_every)
+
+    while model.num_timesteps < total_timesteps:
+        # MaskablePPO.learn(total_timesteps=N, reset_num_timesteps=False)
+        # runs N *more* steps from model.num_timesteps -- but only in whole
+        # rollouts of n_steps * n_envs, overshooting whatever N asks for.
+        # Track progress off model.num_timesteps (the real counter), not a
+        # separately incremented one, or this loop keeps requesting chunks
+        # long after the real step count has already passed total_timesteps.
+        chunk = min(checkpoint_every, total_timesteps - model.num_timesteps) if checkpoint_every else total_timesteps
         model.learn(total_timesteps=chunk, reset_num_timesteps=False)
-        done_steps += chunk
+        done_steps = model.num_timesteps
 
         if checkpoint_every and done_steps >= next_checkpoint:
             path = os.path.join(out_dir, f"checkpoint_{done_steps}")
@@ -124,6 +145,8 @@ def _parse_args():
     parser.add_argument("--eval-hands", type=int, default=500)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--tensorboard-log", type=str, default=None)
+    parser.add_argument("--resume-from", type=str, default=None,
+                        help="Resume from a saved checkpoint .zip instead of training from scratch")
     return parser.parse_args()
 
 
@@ -133,4 +156,4 @@ if __name__ == "__main__":
           num_players_range=(args.min_players, args.max_players), out_dir=args.out_dir,
           checkpoint_every=args.checkpoint_every, self_play_every=args.self_play_every,
           eval_every=args.eval_every, eval_hands=args.eval_hands, seed=args.seed,
-          tensorboard_log=args.tensorboard_log)
+          tensorboard_log=args.tensorboard_log, resume_from=args.resume_from)
