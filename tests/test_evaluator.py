@@ -1,133 +1,37 @@
-"""Test Hand evaluation."""
-import logging
+import random
 
-from tools.hand_evaluator import eval_best_hand
-
-log = logging.getLogger(__name__)
+from poker.evaluator import estimate_equity, rank_players, score_hand
 
 
-def test_evaluator1():
-    """Hand evaluator test"""
-    cards = [['3H', '3S', '4H', '4S', '8S', '8C', 'QH'],
-             ['KH', '6C', '4H', '4S', '8S', '8C', 'QH']]
-    expected = 1
-    winner, _ = eval_best_hand(cards)
-    assert winner == cards[expected]
+def test_higher_hand_class_scores_better():
+    board = ["2h", "5d", "9c", "Kh", "3s"]
+    two_pair = score_hand(["2c", "5h"], board)       # two pair 5s and 2s
+    trips = score_hand(["9h", "9d"], board)           # trip 9s
+    assert trips < two_pair  # lower treys score = stronger hand
 
 
-def test_evaluator2():
-    """Hand evaluator test"""
-    cards = [['8H', '8D', 'QH', '7H', '9H', 'JH', 'TH'],
-             ['KH', '6C', 'QH', '7H', '9H', 'JH', 'TH']]
-    expected = 1
-    winner, _ = eval_best_hand(cards)
-    assert winner == cards[expected]
+def test_rank_players_orders_best_first():
+    board = ["Ah", "Kh", "Qh", "2c", "3d"]
+    hands = [(0, ["Jh", "Th"]), (1, ["2h", "3h"]), (2, ["4c", "4d"])]
+    ranking = rank_players(hands, board)
+    # player 0 has royal flush on a heart-heavy board, should win
+    assert ranking[0][0] == 0
 
 
-def test_evaluator3():
-    """Hand evaluator test"""
-    cards = [['AS', 'KS', 'TS', '9S', '7S', '2H', '2H'],
-             ['AS', 'KS', 'TS', '9S', '8S', '2H', '2H']]
-    expected = 1
-    winner, _ = eval_best_hand(cards)
-    assert winner == cards[expected]
+def test_pocket_aces_heads_up_equity_is_favoured():
+    rng = random.Random(0)
+    equity = estimate_equity(["Ah", "Ac"], [], num_opponents=1, n_sims=800, rng=rng)
+    assert 0.75 < equity < 0.95  # AA vs random hand heads-up is ~85%
 
 
-def test_evaluator4():
-    """Hand evaluator test"""
-    cards = [['8S', 'TS', '8H', 'KS', '9S', 'TH', 'KH'],
-             ['TD', '7S', '8H', 'KS', '9S', 'TH', 'KH']]
-    expected = 0
-    winner, _ = eval_best_hand(cards)
-    assert winner == cards[expected]
+def test_equity_drops_with_more_opponents():
+    rng = random.Random(0)
+    heads_up = estimate_equity(["Kh", "Kc"], [], num_opponents=1, n_sims=600, rng=rng)
+    five_way = estimate_equity(["Kh", "Kc"], [], num_opponents=5, n_sims=600, rng=rng)
+    assert five_way < heads_up
 
 
-def test_evaluator5():
-    """Hand evaluator test"""
-    cards = [['2D', '2H', 'AS', 'AD', 'AH', '8S', '7H'],
-             ['7C', '7S', '7H', 'AD', 'AS', '8S', '8H']]
-    expected = 0
-    winner, _ = eval_best_hand(cards)
-    assert winner == cards[expected]
-
-
-def test_evaluator6():
-    """Hand evaluator test"""
-    cards = [['7C', '7S', '7H', 'AD', 'KS', '5S', '8H'],
-             ['2D', '3H', 'AS', '4D', '5H', '8S', '7H']]
-    expected = 1
-    winner, _ = eval_best_hand(cards)
-    assert winner == cards[expected]
-
-
-def test_evaluator6b():
-    """Hand evaluator test"""
-    cards = [['7C', '7C', 'AC', 'AC', '8C', '8S', '7H'],
-             ['2C', '3C', '4C', '5C', '6C', '8S', 'KH']]
-    expected = 1
-    winner, _ = eval_best_hand(cards)
-    assert winner == cards[expected]
-
-
-def test_evaluator7():
-    """Hand evaluator test"""
-    cards = [['AC', 'JS', 'AS', '2D', '5H', '3S', '3H'],
-             ['QD', 'JD', 'TS', '9D', '6H', '8S', 'KH'],
-             ['2D', '3D', '4S', '5D', '6H', '8S', 'KH']]
-    expected = 1
-    winner, _ = eval_best_hand(cards)
-    assert winner == cards[expected]
-
-
-def test_evaluator8():
-    """Hand evaluator test"""
-    cards = [['7C', '5S', '3S', 'JD', '8H', '2S', 'KH'],
-             ['AD', '3D', '4S', '5D', '9H', '8S', 'KH']]
-    expected = 1
-    winner, _ = eval_best_hand(cards)
-    assert winner == cards[expected]
-
-
-def test_evaluator9():
-    """Hand evaluator test"""
-    cards = [['2C', '2D', '4S', '4D', '4H', '8S', 'KH'],
-             ['7C', '7S', '7D', '7H', '8H', '8S', 'JH']]
-    expected = 1
-    winner, _ = eval_best_hand(cards)
-    assert winner == cards[expected]
-
-
-def test_evaluator10():
-    """Hand evaluator test"""
-    cards = [['7C', '5S', '3S', 'JD', '8H', '2S', 'KH'],
-             ['AD', '3D', '3S', '5D', '9H', '8S', 'KH']]
-    expected = 1
-    winner, _ = eval_best_hand(cards)
-    assert winner == cards[expected]
-
-
-def test_evaluator11():
-    """Hand evaluator test"""
-    cards = [['7H', '7S', '3S', 'JD', '8H', '2S', 'KH'],
-             ['7D', '3D', '3S', '7C', '9H', '8S', 'KH']]
-    expected = 1
-    winner, _ = eval_best_hand(cards)
-    assert winner == cards[expected]
-
-
-def test_evaluator12():
-    """Hand evaluator test"""
-    cards = [['AS', '8H', 'TS', 'JH', '3H', '2H', 'AH'],
-             ['QD', 'QH', 'TS', 'JH', '3H', '2H', 'AH']]
-    expected = 1
-    winner, _ = eval_best_hand(cards)
-    assert winner == cards[expected]
-
-
-def test_evaluator13():
-    """Hand evaluator test"""
-    cards = [['9S', '7H', 'KS', 'KH', 'AH', 'AS', 'AC'],
-             ['8D', '2H', 'KS', 'KH', 'AH', 'AS', 'AC']]
-    expected = 0
-    winner, _ = eval_best_hand(cards)
-    assert winner == cards[expected]
+def test_equity_is_one_with_no_opponents():
+    rng = random.Random(0)
+    equity = estimate_equity(["Ah", "Ac"], ["2h", "3h", "4h", "5h", "9c"], num_opponents=0, n_sims=10, rng=rng)
+    assert equity == 1.0
