@@ -93,8 +93,20 @@ def build_engine_from_situation(situation: dict) -> tuple:
     return engine, hero_seat
 
 
-def decide(situation: dict, model_path: str = None, deterministic: bool = True, n_equity_sims: int = 500) -> dict:
-    """Return the bot's decision for `situation` (see module docstring)."""
+def decide(situation: dict, agent=None, model_path: str = None, deterministic: bool = True,
+          n_equity_sims: int = 500) -> dict:
+    """Return the bot's decision for `situation` (see module docstring).
+
+    Args:
+        agent: a ready-to-use `Agent` instance (e.g. `RandomAgent()`,
+            `RuleBasedAgent(aggression=0.7)`, `RLAgent(path)`) to decide
+            with. Takes priority over `model_path` -- lets callers (e.g.
+            the dashboard) pick any agent, not just "RL model or the
+            default rule-based fallback".
+        model_path: path to a trained MaskablePPO checkpoint; ignored if
+            `agent` is given. If neither is given, falls back to a
+            default rule-based heuristic agent.
+    """
     engine, hero_seat = build_engine_from_situation(situation)
     legal = engine.legal_actions(hero_seat)
     if not legal:
@@ -104,14 +116,19 @@ def decide(situation: dict, model_path: str = None, deterministic: bool = True, 
     num_opponents = sum(1 for p in engine.players if p.active and p.seat != hero_seat)
     equity = estimate_equity(hero.hole_cards, engine.board, num_opponents, n_sims=n_equity_sims)
 
-    if model_path:
-        from agents.rl_agent import RLAgent
-        agent = RLAgent(model_path, deterministic=deterministic)
+    if agent is None:
+        if model_path:
+            from agents.rl_agent import RLAgent
+            agent = RLAgent(model_path, deterministic=deterministic)
+        else:
+            from agents.rule_based_agent import RuleBasedAgent
+            agent = RuleBasedAgent(aggression=0.5, n_sims=n_equity_sims)
+
+    if hasattr(agent, "act_with_probabilities"):
         action, probs = agent.act_with_probabilities(engine, hero_seat)
         action_probabilities = {a.name: round(p, 4) for a, p in probs.items()}
     else:
-        from agents.rule_based_agent import RuleBasedAgent
-        action = RuleBasedAgent(aggression=0.5, n_sims=n_equity_sims).act(engine, hero_seat)
+        action = agent.act(engine, hero_seat)
         action_probabilities = None
 
     return {
@@ -121,7 +138,7 @@ def decide(situation: dict, model_path: str = None, deterministic: bool = True, 
         "legal_actions": {a.name: round(amt, 2) for a, amt in legal.items()},
         "pot_before_action": round(engine.pot_total(), 2),
         "hero_equity_vs_live_opponents": round(equity, 4),
-        "used_model": model_path or "rule_based_fallback (no --model given)",
+        "used_model": model_path or getattr(agent, "name", agent.__class__.__name__),
     }
 
 

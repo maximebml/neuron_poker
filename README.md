@@ -147,6 +147,25 @@ they've put in *this street* only. Output:
 rule-based equity heuristic, so the tool is still useful before you've
 trained anything.
 
+## Local dashboard
+
+A local Streamlit dashboard lets you pick an agent and build a table
+situation with widgets instead of hand-writing JSON:
+
+```
+streamlit run dashboard/app.py
+```
+
+In the sidebar, choose the agent (a trained RL checkpoint -- auto-discovered
+from `models/`, the rule-based heuristic at any aggression, or random), then
+in the main panel set the number of players, blinds, button, street and
+board, each seat's stack/current bet/folded/all-in state, and the hero's
+seat and hole cards. "Get decision" runs the same `inference.decide.decide`
+pipeline the CLI uses and shows the action, sizing, legal actions, hand
+equity, and (for the RL agent) the full action-probability breakdown. An
+expander at the bottom shows the equivalent situation JSON, so anything you
+build in the dashboard can be replayed with `main.py decide --situation`.
+
 ## Design notes / known simplifications
 
 - Bet sizes are continuous chip amounts (not integer chips); this is
