@@ -17,15 +17,37 @@ import sys
 
 
 def cmd_train(argv):
-    import runpy
+    # Call training.train.train() directly rather than routing through
+    # runpy: with --vec-env subproc, SubprocVecEnv's forkserver/spawn
+    # workers need to re-import "the main module" to start up, and doing
+    # that through runpy's simulated __main__ (rather than this file
+    # being the real one) measured ~9x slower end to end -- each worker
+    # re-executing main.py's own dispatch logic on top of its real work.
+    from training.train import _parse_args, train
     sys.argv = ["training.train"] + argv
-    runpy.run_module("training.train", run_name="__main__")
+    args = _parse_args()
+    train(total_timesteps=args.timesteps, n_envs=args.n_envs,
+         num_players_range=(args.min_players, args.max_players), out_dir=args.out_dir,
+         checkpoint_every=args.checkpoint_every, self_play_every=args.self_play_every,
+         self_play_pool_cap=args.self_play_pool_cap, eval_every=args.eval_every,
+         eval_hands=args.eval_hands, seed=args.seed, tensorboard_log=args.tensorboard_log,
+         resume_from=args.resume_from, vec_env_type=args.vec_env, rule_based_n_sims=args.opponent_n_sims)
 
 
 def cmd_decide(argv):
-    import runpy
+    from inference.decide import _parse_args, decide
     sys.argv = ["inference.decide"] + argv
-    runpy.run_module("inference.decide", run_name="__main__")
+    args = _parse_args()
+    if args.interactive:
+        from inference.decide import _prompt_situation
+        situation = _prompt_situation()
+    elif args.situation:
+        with open(args.situation) as f:
+            situation = json.load(f)
+    else:
+        situation = json.loads(args.json)
+    result = decide(situation, model_path=args.model, deterministic=not args.stochastic)
+    print(json.dumps(result, indent=2))
 
 
 def cmd_evaluate(argv):
