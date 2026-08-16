@@ -59,6 +59,13 @@ class PokerEnv(gym.Env):
             self._rng = random.Random(seed)
         options = options or {}
 
+        # Opponent pools that support it (DiskBackedOpponentPool, used with
+        # SubprocVecEnv self-play -- see training/opponent_pool.py) get a
+        # chance to pick up newly published self-play snapshots here, once
+        # per hand rather than once per action.
+        if hasattr(self.opponent_pool, "refresh"):
+            self.opponent_pool.refresh()
+
         # A hand can end with everyone folding to the hero's blind before
         # the hero ever gets a turn (a "walk"). Gymnasium requires reset()
         # to hand back a live (non-terminated) episode, and a hand with
