@@ -51,18 +51,34 @@ def cmd_decide(argv):
 
 
 def cmd_evaluate(argv):
-    parser = argparse.ArgumentParser(prog="main.py evaluate")
-    parser.add_argument("--model", required=True, help="Path to a trained MaskablePPO .zip checkpoint")
+    parser = argparse.ArgumentParser(prog="main.py evaluate",
+                                      description="Evaluate an agent's bb/100 and win rate against a fixed "
+                                                  "baseline opponent pool (random + 3 rule-based agents).")
+    parser.add_argument("--model", type=str, default=None, help="Path to a trained MaskablePPO .zip checkpoint")
+    parser.add_argument("--agent", type=str, default=None, choices=["rl", "pro", "rule_based", "random"],
+                        help="Which agent to evaluate, overriding the --model-presence default (implied 'rl')")
     parser.add_argument("--hands", type=int, default=2000)
     parser.add_argument("--min-players", type=int, default=2)
     parser.add_argument("--max-players", type=int, default=6)
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args(argv)
 
-    from agents.rl_agent import RLAgent
     from training.evaluate import evaluate_agent
 
-    agent = RLAgent(args.model, deterministic=True)
+    agent_kind = args.agent or ("rl" if args.model else "rule_based")
+    if agent_kind == "rl":
+        from agents.rl_agent import RLAgent
+        agent = RLAgent(args.model, deterministic=True)
+    elif agent_kind == "pro":
+        from agents.pro_agent import ProAgent
+        agent = ProAgent()
+    elif agent_kind == "random":
+        from agents.random_agent import RandomAgent
+        agent = RandomAgent()
+    else:
+        from agents.rule_based_agent import RuleBasedAgent
+        agent = RuleBasedAgent(aggression=0.5)
+
     stats = evaluate_agent(agent, n_hands=args.hands, num_players_range=(args.min_players, args.max_players),
                             seed=args.seed)
     print(json.dumps(stats, indent=2))

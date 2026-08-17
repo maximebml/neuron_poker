@@ -4,12 +4,17 @@ import random
 from env.poker_env import PokerEnv
 
 
-def evaluate_agent(agent, n_hands: int = 2000, num_players_range=(2, 6), seed: int = 0) -> dict:
-    """Play `agent` as hero for `n_hands` hands against the default opponent pool.
+def evaluate_agent(agent, n_hands: int = 2000, num_players_range=(2, 6), seed: int = 0,
+                   opponents: list = None) -> dict:
+    """Play `agent` as hero for `n_hands` hands against `opponents`.
 
     Returns win rate in big blinds per hand, and per hand won/lost stats.
+    `opponents` defaults to PokerEnv's own fixed baseline pool (random +
+    3 RuleBasedAgents); pass e.g. `[RuleBasedAgent(aggression=0.5)]` or
+    `[RLAgent(path)]` for a head-to-head against one specific opponent
+    instead of the standard multi-agent yardstick.
     """
-    env = PokerEnv(num_players_range=num_players_range, seed=seed)
+    env = PokerEnv(num_players_range=num_players_range, seed=seed, opponents=opponents)
     rng = random.Random(seed)
 
     total_bb = 0.0
