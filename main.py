@@ -72,7 +72,10 @@ def cmd_play(argv):
     parser = argparse.ArgumentParser(prog="main.py play",
                                       description="Watch the bot play a few hands against baseline opponents.")
     parser.add_argument("--model", type=str, default=None,
-                        help="RL model controlling seat 0; without it, seat 0 uses the rule-based baseline")
+                        help="RL model controlling seat 0 (equivalent to --agent rl); "
+                             "without it, seat 0 uses the rule-based baseline")
+    parser.add_argument("--agent", type=str, default=None, choices=["rl", "pro", "rule_based", "random"],
+                        help="Explicitly pick seat 0's agent, overriding the --model-presence default")
     parser.add_argument("--num-players", type=int, default=6)
     parser.add_argument("--hands", type=int, default=5)
     parser.add_argument("--stack-bb", type=float, default=200.0, help="Starting stack, in big blinds")
@@ -80,18 +83,24 @@ def cmd_play(argv):
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args(argv)
 
+    from agents.pro_agent import ProAgent
     from agents.random_agent import RandomAgent
     from agents.rule_based_agent import RuleBasedAgent
     from poker.engine import PokerEngine
 
     rng = random.Random(args.seed)
-    if args.model:
+    agent_kind = args.agent or ("rl" if args.model else "rule_based")
+    if agent_kind == "rl":
         from agents.rl_agent import RLAgent
         seat0_agent = RLAgent(args.model, deterministic=True)
+    elif agent_kind == "pro":
+        seat0_agent = ProAgent(rng=rng)
+    elif agent_kind == "random":
+        seat0_agent = RandomAgent(rng=rng)
     else:
         seat0_agent = RuleBasedAgent(aggression=0.5, rng=rng)
     opponent_choices = [RandomAgent(rng=rng), RuleBasedAgent(aggression=0.3, rng=rng),
-                        RuleBasedAgent(aggression=0.7, rng=rng)]
+                        RuleBasedAgent(aggression=0.7, rng=rng), ProAgent(rng=rng)]
     agents_by_seat = [seat0_agent] + [rng.choice(opponent_choices) for _ in range(args.num_players - 1)]
 
     stacks = [args.stack_bb * args.big_blind] * args.num_players

@@ -4,11 +4,12 @@ Run with:
     streamlit run dashboard/app.py
 
 Lets you choose which agent decides (random, the rule-based equity
-heuristic at any aggression, or a trained RL checkpoint), configure a
-table (2-6 players, blinds, per-seat stacks/bets/folded/all-in, street,
-board), and set the hero's hole cards -- then shows the agent's action,
-sizing, legal-action list, hand equity, and (for the RL agent) the full
-action-probability distribution.
+heuristic at any aggression, the sophisticated pro-style rule agent, or
+a trained RL checkpoint), configure a table (2-6 players, blinds,
+per-seat stacks/bets/folded/all-in, street, board), and set the hero's
+hole cards -- then shows the agent's action, sizing, legal-action list,
+hand equity, and (for the RL agent) the full action-probability
+distribution.
 
 This is a thin UI over `inference.decide.decide`, the same function the
 `main.py decide` CLI uses, so a situation built here matches the CLI's
@@ -19,6 +20,7 @@ import os
 
 import streamlit as st
 
+from agents.pro_agent import ProAgent
 from agents.random_agent import RandomAgent
 from agents.rule_based_agent import RuleBasedAgent
 from inference.decide import decide
@@ -33,7 +35,8 @@ STREET_BOARD_SIZE = {"preflop": 0, "flop": 3, "turn": 4, "river": 5}
 # --------------------------------------------------------------------- agent
 
 st.sidebar.header("Agent")
-agent_kind = st.sidebar.radio("Agent type", ["Trained RL model", "Rule-based (equity heuristic)", "Random"])
+agent_kind = st.sidebar.radio("Agent type", ["Trained RL model", "Pro (sophisticated rules)",
+                                             "Rule-based (equity heuristic)", "Random"])
 
 agent = None
 if agent_kind == "Random":
@@ -43,6 +46,12 @@ elif agent_kind == "Rule-based (equity heuristic)":
     aggression = st.sidebar.slider("Aggression", 0.0, 1.0, 0.5, 0.05,
                                    help="0 = tight/calling-station, 1 = loose/aggressive")
     agent = RuleBasedAgent(aggression=aggression)
+
+elif agent_kind == "Pro (sophisticated rules)":
+    st.sidebar.caption("Position-scaled preflop ranges (Chen formula), made-hand/draw "
+                       "classification, continuation betting, texture-aware sizing, "
+                       "pot-odds play. A structured heuristic system, not a solver.")
+    agent = ProAgent()
 
 else:
     models_dir = st.sidebar.text_input("Checkpoints directory", "models")

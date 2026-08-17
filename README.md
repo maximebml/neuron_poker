@@ -17,8 +17,9 @@ poker/        Core no-limit hold'em engine (2-6 players): betting rounds,
 env/          gymnasium.Env wrapping the engine for RL training, plus the
               fixed-size observation encoder and action-legality masking.
 agents/       Pluggable policies sharing one `act(engine, seat)` interface:
-              RandomAgent, RuleBasedAgent (Monte-Carlo-equity heuristic),
-              RLAgent (loads a trained MaskablePPO checkpoint).
+              RandomAgent, RuleBasedAgent (single Monte-Carlo-equity
+              heuristic), ProAgent (structured pro-style rule system --
+              see below), RLAgent (loads a trained MaskablePPO checkpoint).
 training/     Self-play training loop and a baseline-pool evaluator.
 inference/    `decide.py` -- feed the bot an arbitrary situation, get a
               decision back.
@@ -92,6 +93,35 @@ hands with commentary:
 python main.py play --model models/final_model.zip --num-players 6 --hands 10
 ```
 
+Pass `--agent {rl,pro,rule_based,random}` to explicitly pick seat 0's
+policy (`--model` alone implies `rl`); every hand also seats a mix of
+`ProAgent`, `RuleBasedAgent`, and `RandomAgent` as opponents.
+
+## The rule-based pro agent
+
+`agents/pro_agent.py` (`ProAgent`) is a second, more structured
+non-RL baseline, built to play closer to how a strategy-literate human
+would rather than off a single equity number:
+
+- **Preflop**: the Chen formula (a fast, standard hand-strength score --
+  no Monte Carlo needed) drives position-scaled opening, calling, and
+  3-betting ranges, plus a short-stack push/fold mode below 15bb.
+- **Postflop**: classifies the hand into a strength tier from made-hand
+  category (trips+, two pair, top pair vs. a weak kicker pair, etc.) and
+  detected draws (flush draws, open-ended straights, gutshots), then
+  acts on that tier -- continuation betting as the preflop raiser,
+  board-texture-scaled bet sizing (bigger on wet/coordinated boards),
+  pot-odds-driven continuing decisions that tighten as more opponents
+  are in the pot, and getting stacks in rather than min-raising when
+  short relative to the pot (low stack-to-pot ratio).
+
+It is **not a solver** -- no search, no real opponent modeling beyond
+what a single hand's own action history shows, and no exact
+game-theoretic betting frequencies, just explicit, explainable rules.
+Use it via `main.py play --agent pro`, the dashboard's "Pro (sophisticated
+rules)" option, or directly as `ProAgent()` anywhere an `Agent` is
+expected (e.g. `inference.decide.decide(situation, agent=ProAgent())`).
+
 ## Asking it for a decision
 
 `inference/decide.py` takes a plain description of a table state -- it
@@ -157,8 +187,9 @@ streamlit run dashboard/app.py
 ```
 
 In the sidebar, choose the agent (a trained RL checkpoint -- auto-discovered
-from `models/`, the rule-based heuristic at any aggression, or random), then
-in the main panel set the number of players, blinds, button, street and
+from `models/`, the sophisticated pro-style rule agent, the simpler rule-based
+heuristic at any aggression, or random), then in the main panel set the
+number of players, blinds, button, street and
 board, each seat's stack/current bet/folded/all-in state, and the hero's
 seat and hole cards. "Get decision" runs the same `inference.decide.decide`
 pipeline the CLI uses and shows the action, sizing, legal actions, hand
