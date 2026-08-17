@@ -197,6 +197,15 @@ equity, and (for the RL agent) the full action-probability breakdown. An
 expander at the bottom shows the equivalent situation JSON, so anything you
 build in the dashboard can be replayed with `main.py decide --situation`.
 
+A second page, "Play vs ProAgent" (in the sidebar page picker), lets you
+actually play live hands instead of querying single decisions: you act as
+the hero via buttons, opponent seats (ProAgent by default, or any mix of
+rule-based/random/RL agents) act automatically between your turns, and
+hands run end-to-end through the real engine -- multi-street betting,
+showdown reveals, and a running session bb chart. Any seat that busts is
+reloaded to its starting stack before the next hand, so it's a practice
+table, not a tournament.
+
 ## Design notes / known simplifications
 
 - Bet sizes are continuous chip amounts (not integer chips); this is
