@@ -14,6 +14,15 @@ relying on either alone:
   (which would be O(population^2) matches per generation): each
   candidate only plays a handful of sampled peers, not everyone.
 
+Baseline and sparring bb/100 live on very different natural scales (beating
+a weak static pool nets hundreds of bb/100; 1-on-1 play against peers nets
+tens), so both are standardized (z-scored) within each generation's
+population before being blended by baseline_weight -- otherwise the larger-
+magnitude baseline signal would dominate regardless of the requested weight.
+The resulting "combined" score is therefore a unitless selection score, not
+a bb/100 figure; best_baseline_bb100/best_sparring_bb100 remain in real
+units for sanity-checking.
+
 The search itself is a simple (mu, lambda)-style evolutionary loop:
 elitism keeps the top performers unchanged, the rest of each new
 generation is bred by crossover + Gaussian mutation of the survivors.
@@ -55,9 +64,9 @@ def crossover_params(a: dict, b: dict, rng: random.Random) -> dict:
     return {name: (a[name] if rng.random() < 0.5 else b[name]) for name in PARAM_NAMES}
 
 
-def _fitness(candidate_params: dict, population: list, exclude_idx: int, rng: random.Random,
-            baseline_hands: int, sparring_hands: int, sparring_opponents: int, baseline_weight: float,
-            search_equity_sims: int, seed: int) -> dict:
+def _evaluate_candidate(candidate_params: dict, population: list, exclude_idx: int, rng: random.Random,
+                        baseline_hands: int, sparring_hands: int, sparring_opponents: int,
+                        search_equity_sims: int, seed: int) -> dict:
     candidate = ProAgent(rng=random.Random(seed), equity_sims=search_equity_sims, **candidate_params)
     baseline = evaluate_agent(candidate, n_hands=baseline_hands, seed=seed)["bb_per_100"]
 
@@ -71,8 +80,37 @@ def _fitness(candidate_params: dict, population: list, exclude_idx: int, rng: ra
                                               seed=seed + peer_idx, opponents=[opponent])["bb_per_100"])
     sparring = statistics.mean(sparring_scores) if sparring_scores else 0.0
 
-    combined = baseline_weight * baseline + (1 - baseline_weight) * sparring
-    return {"combined": combined, "baseline_bb100": baseline, "sparring_bb100": sparring}
+    return {"baseline_bb100": baseline, "sparring_bb100": sparring}
+
+
+def _zscores(values: list) -> list:
+    """Standardize values to mean 0, stdev 1 (0.0 for everyone if the population is degenerate)."""
+    mean = statistics.mean(values)
+    stdev = statistics.pstdev(values)
+    if stdev < 1e-9:
+        return [0.0 for _ in values]
+    return [(v - mean) / stdev for v in values]
+
+
+def _combine_scores(raw_results: list, baseline_weight: float) -> list:
+    """Blend baseline/sparring bb-per-100 into one selection score.
+
+    The two signals live on very different natural scales: baseline_bb100
+    measures beating a weak, mostly-static fixed pool (commonly hundreds
+    of bb/100), while sparring_bb100 measures 1-on-1 play against other
+    evolving, comparably-skilled candidates (commonly tens of bb/100, often
+    negative). Averaging the raw numbers makes baseline_weight a lie -- with
+    baseline running 5-10x larger, a nominal 0.5/0.5 split is baseline-
+    dominated in practice, which is what let early runs "win" by drifting to
+    parameter values that only exploit the weak fixed pool (bound-wall
+    over-calling, near-zero multiway caution) while barely beating peers.
+    Standardizing each signal within the current population before blending
+    makes baseline_weight control actual selection influence, not just the
+    nominal coefficient.
+    """
+    baseline_z = _zscores([r["baseline_bb100"] for r in raw_results])
+    sparring_z = _zscores([r["sparring_bb100"] for r in raw_results])
+    return [baseline_weight * bz + (1 - baseline_weight) * sz for bz, sz in zip(baseline_z, sparring_z)]
 
 
 def _save_state(out_dir, generation, population, history, best_ever):
@@ -110,11 +148,13 @@ def run_evolution(generations: int, population_size: int = 8, elite_count: int =
         start_gen = 0
 
     for gen in range(start_gen, generations):
-        scored = []
-        for i, candidate_params in enumerate(population):
-            result = _fitness(candidate_params, population, i, rng, baseline_hands, sparring_hands,
-                              sparring_opponents, baseline_weight, search_equity_sims, seed=seed + gen * 1000 + i)
-            scored.append((candidate_params, result))
+        raw_results = [
+            _evaluate_candidate(candidate_params, population, i, rng, baseline_hands, sparring_hands,
+                                sparring_opponents, search_equity_sims, seed=seed + gen * 1000 + i)
+            for i, candidate_params in enumerate(population)]
+        combined_scores = _combine_scores(raw_results, baseline_weight)
+        scored = [(population[i], {**raw_results[i], "combined": combined_scores[i]})
+                 for i in range(len(population))]
 
         scored.sort(key=lambda t: -t[1]["combined"])
         best_params, best_result = scored[0]
@@ -131,7 +171,9 @@ def run_evolution(generations: int, population_size: int = 8, elite_count: int =
 
         if best_result["combined"] > best_ever["fitness"]:
             best_ever = {"params": best_params, "fitness": best_result["combined"]}
-            print(f"[gen {gen}] new best ever: combined={best_ever['fitness']:.1f} bb/100")
+            print(f"[gen {gen}] new best ever: combined={best_ever['fitness']:.2f} "
+                 f"(z-score blend, baseline={best_result['baseline_bb100']:.1f} bb/100, "
+                 f"sparring={best_result['sparring_bb100']:.1f} bb/100)")
 
         survivors = [p for p, _ in scored[:survivor_count]]
         next_population = [p for p, _ in scored[:elite_count]]  # elitism
@@ -143,7 +185,8 @@ def run_evolution(generations: int, population_size: int = 8, elite_count: int =
 
         _save_state(out_dir, gen, population, history, best_ever)
 
-    print(f"Optimization complete. Best ever: {best_ever['fitness']:.1f} bb/100 (combined baseline+sparring)")
+    print(f"Optimization complete. Best ever combined score: {best_ever['fitness']:.2f} "
+         f"(z-score blend of baseline+sparring, not itself a bb/100 figure)")
     print(f"Best params saved -> {os.path.join(out_dir, 'best_params.json')}")
     return best_ever
 

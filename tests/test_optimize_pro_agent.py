@@ -1,9 +1,11 @@
 import json
 import os
 import random
+import statistics
 
 from agents.pro_agent import PARAM_BOUNDS, PARAM_DEFAULTS
-from training.optimize_pro_agent import crossover_params, mutate_params, run_evolution, sample_random_params
+from training.optimize_pro_agent import (_combine_scores, _zscores, crossover_params, mutate_params, run_evolution,
+                                         sample_random_params)
 
 
 def test_sample_random_params_respects_bounds():
@@ -35,6 +37,49 @@ def test_crossover_params_picks_each_value_from_one_parent_or_the_other():
     # with enough parameters, a 50/50 coin flip per gene should draw from both parents at least once
     assert 0.0 in child.values()
     assert 1.0 in child.values()
+
+
+def test_zscores_degenerate_population_returns_zeros():
+    assert _zscores([5.0, 5.0, 5.0]) == [0.0, 0.0, 0.0]
+
+
+def test_zscores_mean_zero_stdev_one():
+    values = [10.0, 20.0, 30.0, 40.0]
+    z = _zscores(values)
+    assert abs(statistics.mean(z)) < 1e-9
+    assert abs(statistics.pstdev(z) - 1.0) < 1e-9
+
+
+def test_combine_scores_not_dominated_by_larger_scale_signal():
+    # baseline_bb100 is ~10x the scale of sparring_bb100, as seen in real runs.
+    # Candidate 0 "wins" on baseline but is worst on sparring; candidate 2 is the
+    # reverse. A correctly-normalized 50/50 blend should not let the larger raw
+    # scale of baseline silently dominate: the two should land close together,
+    # not with candidate 0 far ahead purely because its raw numbers are bigger.
+    raw_results = [
+        {"baseline_bb100": 800.0, "sparring_bb100": -40.0},
+        {"baseline_bb100": 500.0, "sparring_bb100": 10.0},
+        {"baseline_bb100": 200.0, "sparring_bb100": 60.0},
+    ]
+    combined = _combine_scores(raw_results, baseline_weight=0.5)
+    assert len(combined) == 3
+    # Both signals contribute roughly equally once standardized: since baseline
+    # and sparring rank in exactly opposite order across these three candidates,
+    # a genuinely-balanced 50/50 blend should score them all close to zero/tied,
+    # not have candidate 0 running away with it as a raw average would.
+    assert max(combined) - min(combined) < 1.0
+
+
+def test_combine_scores_respects_weight_direction():
+    raw_results = [
+        {"baseline_bb100": 800.0, "sparring_bb100": -40.0},
+        {"baseline_bb100": 200.0, "sparring_bb100": 60.0},
+    ]
+    baseline_leaning = _combine_scores(raw_results, baseline_weight=0.9)
+    sparring_leaning = _combine_scores(raw_results, baseline_weight=0.1)
+    # candidate 0 has the better baseline but worse sparring: weighting toward
+    # baseline should favor it more than weighting toward sparring does.
+    assert (baseline_leaning[0] - baseline_leaning[1]) > (sparring_leaning[0] - sparring_leaning[1])
 
 
 def test_run_evolution_end_to_end_and_resume(tmp_path):
