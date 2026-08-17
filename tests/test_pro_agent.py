@@ -2,9 +2,40 @@ import random
 
 import pytest
 
-from agents.pro_agent import ProAgent, Tier, board_texture, chen_score, position_quality, postflop_tier
+from agents.pro_agent import PARAM_BOUNDS, PARAM_DEFAULTS, ProAgent, Tier, board_texture, chen_score, \
+    position_quality, postflop_tier
 from agents.random_agent import RandomAgent
 from poker.engine import PokerEngine
+
+
+# --------------------------------------------------------------- parameters
+
+def test_default_agent_uses_param_defaults():
+    agent = ProAgent()
+    assert agent.params == PARAM_DEFAULTS
+
+
+def test_overriding_a_param_leaves_the_rest_at_defaults():
+    agent = ProAgent(cbet_freq=0.9)
+    assert agent.params["cbet_freq"] == 0.9
+    for name, value in PARAM_DEFAULTS.items():
+        if name != "cbet_freq":
+            assert agent.params[name] == value
+
+
+def test_unknown_param_raises():
+    with pytest.raises(TypeError):
+        ProAgent(not_a_real_param=1.0)
+
+
+def test_param_bounds_cover_exactly_the_same_names_as_defaults():
+    assert set(PARAM_BOUNDS) == set(PARAM_DEFAULTS)
+
+
+def test_param_defaults_fall_within_their_own_bounds():
+    for name, default in PARAM_DEFAULTS.items():
+        low, high, _sigma = PARAM_BOUNDS[name]
+        assert low <= default <= high, f"{name} default {default} outside bounds [{low}, {high}]"
 
 
 # ------------------------------------------------------------- Chen formula

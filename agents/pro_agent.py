@@ -25,6 +25,18 @@ a documented, deliberate scope (e.g. kicker strength beyond "paired the
 top board card or not" isn't tracked; board run-outs where the board
 itself is already paired/trips get coarser treatment since attributing
 hand strength correctly there requires real card-by-card hand reading).
+
+The 20 numeric thresholds/frequencies below `PARAM_DEFAULTS` are every
+strategic knob in the decision logic -- position-scaled preflop
+ranges, bet/bluff/c-bet frequencies, pot-odds margins, SPR commitment
+points -- pulled out of the method bodies so they can be tuned instead
+of hardcoded. `PARAM_BOUNDS` (used by `training/optimize_pro_agent.py`,
+not by the agent itself) gives each one a sane search range and mutation
+step. A few small structural cutoffs (multiway bet/bluff eligibility,
+board-texture weights) are deliberately left as fixed constants rather
+than added to the search space -- they define *what a rule means* more
+than *how aggressively to apply it*, and including every last constant
+would expand the search space for little strategic value.
 """
 import random
 from collections import Counter
@@ -41,6 +53,58 @@ _STRONG_HAND_CLASSES = {"Straight Flush", "Four of a Kind", "Full House", "Flush
                         "Three of a Kind"}
 _CHEN_HIGH_CARD = {"A": 10, "K": 8, "Q": 7, "J": 6, "T": 5}
 _CHEN_GAP_PENALTY = {0: 0, 1: 1, 2: 2, 3: 4}
+
+# name -> default value. Defaults reproduce the agent's original hand-tuned
+# behavior exactly; ProAgent() with no overrides is unaffected by this
+# refactor.
+PARAM_DEFAULTS = {
+    "short_stack_bb": 15.0,
+    "push_intercept": 10.0,
+    "push_position_coef": 3.5,
+    "open_intercept": 9.0,
+    "open_position_coef": 3.0,
+    "fourbet_raise_chen": 10.5,
+    "fourbet_call_chen": 9.0,
+    "facing_raise_raise_intercept": 10.0,
+    "facing_raise_raise_position_coef": 1.0,
+    "facing_raise_call_intercept": 8.0,
+    "facing_raise_call_position_coef": 1.5,
+    "wetness_big_size_threshold": 0.5,
+    "multiway_margin_coef": 0.03,
+    "semi_bluff_check_freq": 0.6,
+    "cbet_freq": 0.65,
+    "air_bluff_freq": 0.15,
+    "spr_tier_upgrade": 1.5,
+    "spr_allin_threshold": 2.5,
+    "draw_semibluff_raise_freq": 0.35,
+    "bluffcatch_extra_margin": 0.10,
+}
+
+# name -> (low, high, mutation_sigma). Search space for optimization only.
+PARAM_BOUNDS = {
+    "short_stack_bb": (5.0, 25.0, 2.0),
+    "push_intercept": (5.0, 15.0, 1.0),
+    "push_position_coef": (0.0, 6.0, 0.6),
+    "open_intercept": (4.0, 13.0, 1.0),
+    "open_position_coef": (0.0, 6.0, 0.6),
+    "fourbet_raise_chen": (7.0, 15.0, 1.0),
+    "fourbet_call_chen": (5.0, 13.0, 1.0),
+    "facing_raise_raise_intercept": (6.0, 14.0, 1.0),
+    "facing_raise_raise_position_coef": (0.0, 4.0, 0.5),
+    "facing_raise_call_intercept": (4.0, 12.0, 1.0),
+    "facing_raise_call_position_coef": (0.0, 4.0, 0.5),
+    "wetness_big_size_threshold": (0.0, 1.0, 0.15),
+    "multiway_margin_coef": (0.0, 0.10, 0.02),
+    "semi_bluff_check_freq": (0.0, 1.0, 0.15),
+    "cbet_freq": (0.0, 1.0, 0.15),
+    "air_bluff_freq": (0.0, 1.0, 0.08),
+    "spr_tier_upgrade": (0.5, 4.0, 0.4),
+    "spr_allin_threshold": (1.0, 5.0, 0.5),
+    "draw_semibluff_raise_freq": (0.0, 1.0, 0.15),
+    "bluffcatch_extra_margin": (0.0, 0.3, 0.05),
+}
+
+assert set(PARAM_DEFAULTS) == set(PARAM_BOUNDS)
 
 
 class Tier(IntEnum):
@@ -185,10 +249,14 @@ def board_texture(board: list):
 class ProAgent(Agent):
     """Rule-based agent playing a solid, pro-influenced TAG style. See module docstring."""
 
-    def __init__(self, rng: random.Random = None, equity_sims: int = 200, name: str = "pro"):
+    def __init__(self, rng: random.Random = None, equity_sims: int = 200, name: str = "pro", **strategy_params):
         self.rng = rng or random.Random()
         self.equity_sims = equity_sims
         self.name = name
+        unknown = set(strategy_params) - set(PARAM_DEFAULTS)
+        if unknown:
+            raise TypeError(f"Unknown ProAgent strategy parameter(s): {sorted(unknown)}")
+        self.params = {**PARAM_DEFAULTS, **strategy_params}
 
     def act(self, engine, seat: int) -> Action:
         legal = engine.legal_actions(seat)
@@ -207,6 +275,7 @@ class ProAgent(Agent):
     # ------------------------------------------------------------- preflop
 
     def _preflop_action(self, engine, seat, legal):
+        p = self.params
         player = engine.players[seat]
         chen = chen_score(player.hole_cards)
         pos = position_quality(seat, engine.button, engine.num_players)
@@ -216,31 +285,31 @@ class ProAgent(Agent):
             1 for h in engine.history
             if h.street == Street.PREFLOP and h.action not in (Action.FOLD, Action.CHECK_CALL))
 
-        if effective_bb <= 15:
+        if effective_bb <= p["short_stack_bb"]:
             # Short-stacked: get it in or fold rather than min-raise into an
             # unworkable stack-to-pot ratio.
-            push_threshold = 10.0 - pos * 3.5
+            push_threshold = p["push_intercept"] - pos * p["push_position_coef"]
             if chen >= push_threshold:
                 return Action.ALL_IN if Action.ALL_IN in legal else (self._best_raise(legal) or Action.CHECK_CALL)
             return Action.FOLD if facing_bet else Action.CHECK_CALL
 
         if not facing_bet:
-            open_threshold = 9.0 - pos * 3.0  # ~9 from early position down to ~6 on the button
+            open_threshold = p["open_intercept"] - pos * p["open_position_coef"]
             if chen >= open_threshold:
                 return Action.RAISE_75 if Action.RAISE_75 in legal else (self._best_raise(legal) or Action.CHECK_CALL)
             return Action.CHECK_CALL
 
         if raises_this_street >= 2:
-            if chen >= 10.5:
+            if chen >= p["fourbet_raise_chen"]:
                 return self._best_raise(legal) or Action.CHECK_CALL
-            return Action.CHECK_CALL if chen >= 9.0 else Action.FOLD
+            return Action.CHECK_CALL if chen >= p["fourbet_call_chen"] else Action.FOLD
 
         # Facing a single open.
-        if chen >= 10.0 - pos:
+        if chen >= p["facing_raise_raise_intercept"] - pos * p["facing_raise_raise_position_coef"]:
             raise_action = Action.RAISE_150 if Action.RAISE_150 in legal else self._best_raise(legal)
             if raise_action:
                 return raise_action
-        if chen >= 8.0 - pos * 1.5:
+        if chen >= p["facing_raise_call_intercept"] - pos * p["facing_raise_call_position_coef"]:
             return Action.CHECK_CALL
         return Action.FOLD
 
@@ -264,31 +333,33 @@ class ProAgent(Agent):
         return bool(preflop_raises) and preflop_raises[-1].seat == seat
 
     def _can_check(self, engine, legal, tier, wetness, num_opponents, was_aggressor):
-        big_size = Action.RAISE_150 if wetness > 0.5 else Action.RAISE_75
+        p = self.params
+        big_size = Action.RAISE_150 if wetness > p["wetness_big_size_threshold"] else Action.RAISE_75
 
         if tier == Tier.STRONG_MADE:
             return (big_size if big_size in legal else self._best_raise(legal)) or Action.CHECK_CALL
         if tier == Tier.MEDIUM_MADE and num_opponents <= 2 and Action.RAISE_33 in legal:
             return Action.RAISE_33
-        if tier == Tier.STRONG_DRAW and Action.RAISE_33 in legal and self.rng.random() < 0.6:
+        if tier == Tier.STRONG_DRAW and Action.RAISE_33 in legal and self.rng.random() < p["semi_bluff_check_freq"]:
             return Action.RAISE_33  # semi-bluff
         if (was_aggressor and engine.street == Street.FLOP and num_opponents <= 2
-                and Action.RAISE_33 in legal and self.rng.random() < 0.65):
+                and Action.RAISE_33 in legal and self.rng.random() < p["cbet_freq"]):
             return Action.RAISE_33  # standard continuation bet
-        if tier == Tier.AIR and num_opponents <= 1 and Action.RAISE_33 in legal and self.rng.random() < 0.15:
+        if tier == Tier.AIR and num_opponents <= 1 and Action.RAISE_33 in legal and self.rng.random() < p["air_bluff_freq"]:
             return Action.RAISE_33  # rare, heads-up-only bluff
         return Action.CHECK_CALL
 
     def _facing_bet(self, engine, seat, legal, tier, num_opponents):
+        p = self.params
         player = engine.players[seat]
         call_amount = legal[Action.CHECK_CALL]
         pot_after_call = engine.pot_total() + call_amount
         pot_odds = call_amount / pot_after_call if pot_after_call > 0 else 0.0
         spr = player.stack / max(engine.pot_total(), 1e-6)
-        multiway_margin = 0.03 * num_opponents
+        multiway_margin = p["multiway_margin_coef"] * num_opponents
 
-        if tier == Tier.STRONG_MADE or (tier == Tier.MEDIUM_MADE and spr <= 1.5):
-            if Action.ALL_IN in legal and spr <= 2.5:
+        if tier == Tier.STRONG_MADE or (tier == Tier.MEDIUM_MADE and spr <= p["spr_tier_upgrade"]):
+            if Action.ALL_IN in legal and spr <= p["spr_allin_threshold"]:
                 return Action.ALL_IN
             return self._best_raise(legal) or Action.CHECK_CALL
 
@@ -296,7 +367,7 @@ class ProAgent(Agent):
                                  n_sims=self.equity_sims, rng=self.rng)
 
         if tier == Tier.STRONG_DRAW:
-            if equity > pot_odds + multiway_margin and self.rng.random() < 0.35:
+            if equity > pot_odds + multiway_margin and self.rng.random() < p["draw_semibluff_raise_freq"]:
                 raise_action = self._best_raise(legal)
                 if raise_action:
                     return raise_action
@@ -306,4 +377,4 @@ class ProAgent(Agent):
             return Action.CHECK_CALL if equity > pot_odds + multiway_margin else Action.FOLD
 
         # Weak made hand or air: only a clean-odds bluff-catch.
-        return Action.CHECK_CALL if equity > pot_odds + 0.10 + multiway_margin else Action.FOLD
+        return Action.CHECK_CALL if equity > pot_odds + p["bluffcatch_extra_margin"] + multiway_margin else Action.FOLD

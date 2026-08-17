@@ -1,14 +1,16 @@
 """neuron_poker: a no-limit hold'em bot (2-6 players) trained with RL.
 
 Usage:
-    python main.py train    [--timesteps N] [--n-envs N] [--min-players N] [--max-players N] ...
-    python main.py evaluate --model models/final_model.zip [--hands N]
-    python main.py decide   --model models/final_model.zip --situation situation.json
-    python main.py play     [--model models/final_model.zip] [--num-players N] [--hands N]
+    python main.py train        [--timesteps N] [--n-envs N] [--min-players N] [--max-players N] ...
+    python main.py evaluate     --agent {rl,pro,rule_based,random} [--model ...] [--hands N]
+    python main.py decide       --model models/final_model.zip --situation situation.json
+    python main.py play         [--agent {rl,pro,rule_based,random}] [--model ...] [--hands N]
+    python main.py optimize-pro [--generations N] [--population-size N] ...
 
-`train` and `decide` accept the same flags as `python -m training.train` /
-`python -m inference.decide` (run with --help for the full list); `main.py`
-is just a single convenient entry point for all four workflows.
+`train`, `decide`, and `optimize-pro` accept the same flags as their
+`python -m training.train` / `python -m inference.decide` /
+`python -m training.optimize_pro_agent` equivalents (run with --help for
+the full list); `main.py` is just a single convenient entry point.
 """
 import argparse
 import json
@@ -139,7 +141,20 @@ def cmd_play(argv):
     print("Final stacks:", {i: round(s, 1) for i, s in enumerate(stacks)})
 
 
-COMMANDS = {"train": cmd_train, "evaluate": cmd_evaluate, "decide": cmd_decide, "play": cmd_play}
+def cmd_optimize_pro(argv):
+    from training.optimize_pro_agent import _parse_args, run_evolution
+    sys.argv = ["training.optimize_pro_agent"] + argv
+    args = _parse_args()
+    run_evolution(generations=args.generations, population_size=args.population_size,
+                  elite_count=args.elite_count, survivor_count=args.survivor_count,
+                  baseline_hands=args.baseline_hands, sparring_hands=args.sparring_hands,
+                  sparring_opponents=args.sparring_opponents, baseline_weight=args.baseline_weight,
+                  search_equity_sims=args.search_equity_sims, seed=args.seed, out_dir=args.out_dir,
+                  resume=args.resume)
+
+
+COMMANDS = {"train": cmd_train, "evaluate": cmd_evaluate, "decide": cmd_decide, "play": cmd_play,
+           "optimize-pro": cmd_optimize_pro}
 
 
 def main():
