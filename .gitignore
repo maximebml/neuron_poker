@@ -6,4 +6,5 @@ models/
 *.zip
 tensorboard_log/
 training_run.log
+pro_agent_optimization.log
 
