@@ -5,12 +5,14 @@ Usage:
     python main.py evaluate     --agent {rl,pro,rule_based,random} [--model ...] [--hands N]
     python main.py decide       --model models/final_model.zip --situation situation.json
     python main.py play         [--agent {rl,pro,rule_based,random}] [--model ...] [--hands N]
-    python main.py optimize-pro [--generations N] [--population-size N] ...
+    python main.py optimize-pro    [--generations N] [--population-size N] ...
+    python main.py optimize-pro-v2 [--generations N] [--pro-weight 0.7] ...
 
-`train`, `decide`, and `optimize-pro` accept the same flags as their
-`python -m training.train` / `python -m inference.decide` /
-`python -m training.optimize_pro_agent` equivalents (run with --help for
-the full list); `main.py` is just a single convenient entry point.
+`train`, `decide`, `optimize-pro`, and `optimize-pro-v2` accept the same
+flags as their `python -m training.train` / `python -m inference.decide` /
+`python -m training.optimize_pro_agent` / `python -m
+training.optimize_pro_agent_v2` equivalents (run with --help for the full
+list); `main.py` is just a single convenient entry point.
 """
 import argparse
 import json
@@ -153,8 +155,19 @@ def cmd_optimize_pro(argv):
                   resume=args.resume)
 
 
+def cmd_optimize_pro_v2(argv):
+    from training.optimize_pro_agent_v2 import _parse_args, run_evolution
+    sys.argv = ["training.optimize_pro_agent_v2"] + argv
+    args = _parse_args()
+    run_evolution(generations=args.generations, population_size=args.population_size,
+                  elite_count=args.elite_count, survivor_count=args.survivor_count,
+                  pro_hands=args.pro_hands, other_hands=args.other_hands, pro_weight=args.pro_weight,
+                  search_equity_sims=args.search_equity_sims, seed=args.seed, out_dir=args.out_dir,
+                  model_path=args.model_path, resume=args.resume)
+
+
 COMMANDS = {"train": cmd_train, "evaluate": cmd_evaluate, "decide": cmd_decide, "play": cmd_play,
-           "optimize-pro": cmd_optimize_pro}
+           "optimize-pro": cmd_optimize_pro, "optimize-pro-v2": cmd_optimize_pro_v2}
 
 
 def main():
