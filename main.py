@@ -7,12 +7,14 @@ Usage:
     python main.py play         [--agent {rl,pro,rule_based,random}] [--model ...] [--hands N]
     python main.py optimize-pro    [--generations N] [--population-size N] ...
     python main.py optimize-pro-v2 [--generations N] [--pro-weight 0.7] ...
+    python main.py optimize-pro-v3 [--iterations N] [--generations-per-iteration N] ...
 
-`train`, `decide`, `optimize-pro`, and `optimize-pro-v2` accept the same
-flags as their `python -m training.train` / `python -m inference.decide` /
-`python -m training.optimize_pro_agent` / `python -m
-training.optimize_pro_agent_v2` equivalents (run with --help for the full
-list); `main.py` is just a single convenient entry point.
+`train`, `decide`, `optimize-pro`, `optimize-pro-v2`, and `optimize-pro-v3`
+accept the same flags as their `python -m training.train` / `python -m
+inference.decide` / `python -m training.optimize_pro_agent` / `python -m
+training.optimize_pro_agent_v2` / `python -m training.optimize_pro_agent_v3`
+equivalents (run with --help for the full list); `main.py` is just a single
+convenient entry point.
 """
 import argparse
 import json
@@ -166,8 +168,21 @@ def cmd_optimize_pro_v2(argv):
                   model_path=args.model_path, resume=args.resume)
 
 
+def cmd_optimize_pro_v3(argv):
+    from training.optimize_pro_agent_v3 import _parse_args, run_chain
+    sys.argv = ["training.optimize_pro_agent_v3"] + argv
+    args = _parse_args()
+    run_chain(iterations=args.iterations, generations_per_iteration=args.generations_per_iteration,
+             population_size=args.population_size, elite_count=args.elite_count,
+             survivor_count=args.survivor_count, search_hands=args.search_hands,
+             validation_hands=args.validation_hands, search_equity_sims=args.search_equity_sims,
+             seed=args.seed, out_dir=args.out_dir, final_out_dir=args.final_out_dir,
+             champion_init_path=args.champion_init_path, resume=args.resume)
+
+
 COMMANDS = {"train": cmd_train, "evaluate": cmd_evaluate, "decide": cmd_decide, "play": cmd_play,
-           "optimize-pro": cmd_optimize_pro, "optimize-pro-v2": cmd_optimize_pro_v2}
+           "optimize-pro": cmd_optimize_pro, "optimize-pro-v2": cmd_optimize_pro_v2,
+           "optimize-pro-v3": cmd_optimize_pro_v3}
 
 
 def main():
