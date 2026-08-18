@@ -19,10 +19,21 @@ sparring), this is deliberately narrower on two axes:
   makes any improvement attributable to a specific, named strategic knob
   rather than 20 simultaneously-drifting numbers.
 - Opponents: all fixed and already-known-strength (no self-play, no
-  population sparring), so a plain weighted average of bb/100 across them
-  is already a meaningful, non-inflating fitness signal -- unlike the
-  original optimizer's fixed pool, none of these are being gamed by an
-  evolving population, so no z-score normalization is needed here.
+  population sparring), so unlike the original optimizer's fixed pool none
+  of these are being gamed by an evolving population.
+
+That said, vs_pro_bb100 and vs_others_bb100 still live on very different
+raw scales -- vs_pro is measured against an opponent of comparable skill
+and stays in a tight range, while vs_others averages in weak, highly
+exploitable opponents (random, the RL model) where a good candidate can
+run to 500-1500+ bb/100. An early version of this script blended the raw
+numbers with pro_weight directly, which quietly let vs_others dominate
+regardless of the requested weight and produced parameters that hit their
+search bounds by over-exploiting the weak opponents (verified: a large
+head-to-head against stock ProAgent came back statistically even, despite
+a large claimed "improvement"). Both signals are now z-score standardized
+within each generation's population before blending -- the same fix
+optimize_pro_agent.py needed for the same underlying reason.
 
 Usage:
     python -m training.optimize_pro_agent_v2 --generations 8
@@ -99,6 +110,33 @@ def _evaluate_candidate(candidate_params: dict, pro_hands: int, other_hands: int
     return {"vs_pro_bb100": vs_pro, "vs_others_bb100": vs_others_mean, "other_scores": other_scores}
 
 
+def _zscores(values: list) -> list:
+    """Standardize to mean 0, stdev 1 (0.0 for everyone if the population is degenerate)."""
+    mean = statistics.mean(values)
+    stdev = statistics.pstdev(values)
+    if stdev < 1e-9:
+        return [0.0 for _ in values]
+    return [(v - mean) / stdev for v in values]
+
+
+def _combine_scores(raw_results: list, pro_weight: float) -> list:
+    """Blend vs-pro and vs-others bb/100 into one selection score.
+
+    vs_pro_bb100 is measured against an opponent of comparable skill (the
+    stock ProAgent), so it naturally stays in a tight range. vs_others_bb100
+    is a mean that includes weak, highly exploitable opponents (random, the
+    RL model) where a good candidate can run to 500-1500+ bb/100 -- a much
+    larger and noisier scale. Blending the raw numbers with pro_weight would
+    make that weight a lie: whichever signal has the bigger swing that
+    generation dominates regardless of the requested split. Standardizing
+    both within the current population before blending is the same fix
+    optimize_pro_agent.py needed for the same reason.
+    """
+    pro_z = _zscores([r["vs_pro_bb100"] for r in raw_results])
+    others_z = _zscores([r["vs_others_bb100"] for r in raw_results])
+    return [pro_weight * pz + (1 - pro_weight) * oz for pz, oz in zip(pro_z, others_z)]
+
+
 def _save_state(out_dir, generation, population, history, best_ever):
     os.makedirs(out_dir, exist_ok=True)
     state = {"generation": generation, "population": population, "history": history, "best_ever": best_ever}
@@ -136,12 +174,13 @@ def run_evolution(generations: int, population_size: int = 8, elite_count: int =
         start_gen = 0
 
     for gen in range(start_gen, generations):
-        scored = []
-        for i, candidate_params in enumerate(population):
-            result = _evaluate_candidate(candidate_params, pro_hands, other_hands, other_opponents,
-                                         search_equity_sims, seed=seed + gen * 1000 + i)
-            combined = pro_weight * result["vs_pro_bb100"] + (1 - pro_weight) * result["vs_others_bb100"]
-            scored.append((candidate_params, {**result, "combined": combined}))
+        raw_results = [
+            _evaluate_candidate(candidate_params, pro_hands, other_hands, other_opponents,
+                                search_equity_sims, seed=seed + gen * 1000 + i)
+            for i, candidate_params in enumerate(population)]
+        combined_scores = _combine_scores(raw_results, pro_weight)
+        scored = [(population[i], {**raw_results[i], "combined": combined_scores[i]})
+                 for i in range(len(population))]
 
         scored.sort(key=lambda t: -t[1]["combined"])
         best_params, best_result = scored[0]
@@ -159,8 +198,8 @@ def run_evolution(generations: int, population_size: int = 8, elite_count: int =
 
         if best_result["combined"] > best_ever["fitness"]:
             best_ever = {"params": best_params, "fitness": best_result["combined"]}
-            print(f"[gen {gen}] new best ever: combined={best_ever['fitness']:.1f} bb/100 "
-                 f"(vs pro={best_result['vs_pro_bb100']:.1f}, vs others={best_result['vs_others_bb100']:.1f})")
+            print(f"[gen {gen}] new best ever: combined={best_ever['fitness']:.2f} (z-score blend, "
+                 f"vs pro={best_result['vs_pro_bb100']:.1f} bb/100, vs others={best_result['vs_others_bb100']:.1f} bb/100)")
 
         survivors = [p for p, _ in scored[:survivor_count]]
         next_population = [p for p, _ in scored[:elite_count]]  # elitism
@@ -172,8 +211,9 @@ def run_evolution(generations: int, population_size: int = 8, elite_count: int =
 
         _save_state(out_dir, gen, population, history, best_ever)
 
-    print(f"Optimization complete. Best ever: {best_ever['fitness']:.1f} bb/100 (combined, "
-         f"{pro_weight:.0%} vs stock ProAgent / {1 - pro_weight:.0%} vs others)")
+    print(f"Optimization complete. Best ever combined score: {best_ever['fitness']:.2f} "
+         f"(z-score blend, {pro_weight:.0%} vs stock ProAgent / {1 - pro_weight:.0%} vs others, "
+         f"not itself a bb/100 figure)")
     print(f"Best params saved -> {os.path.join(out_dir, 'best_params.json')}")
     return best_ever
 

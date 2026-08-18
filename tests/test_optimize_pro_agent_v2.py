@@ -1,10 +1,11 @@
 import json
 import os
 import random
+import statistics
 
 from agents.pro_agent import PARAM_BOUNDS, PARAM_DEFAULTS
-from training.optimize_pro_agent_v2 import (OPTIMIZED_PARAM_NAMES, _default_params, crossover_params,
-                                            mutate_params, run_evolution, sample_random_params)
+from training.optimize_pro_agent_v2 import (OPTIMIZED_PARAM_NAMES, _combine_scores, _default_params, _zscores,
+                                            crossover_params, mutate_params, run_evolution, sample_random_params)
 
 
 def test_optimized_param_names_are_a_real_subset_of_param_defaults():
@@ -49,6 +50,45 @@ def test_crossover_params_picks_each_value_from_one_parent_or_the_other():
     assert all(v in (0.0, 1.0) for v in child.values())
     assert 0.0 in child.values()
     assert 1.0 in child.values()
+
+
+def test_zscores_degenerate_population_returns_zeros():
+    assert _zscores([5.0, 5.0, 5.0]) == [0.0, 0.0, 0.0]
+
+
+def test_zscores_mean_zero_stdev_one():
+    values = [10.0, 20.0, 30.0, 40.0]
+    z = _zscores(values)
+    assert abs(statistics.mean(z)) < 1e-9
+    assert abs(statistics.pstdev(z) - 1.0) < 1e-9
+
+
+def test_combine_scores_not_dominated_by_larger_scale_others_signal():
+    # vs_others_bb100 runs ~10x the scale of vs_pro_bb100 here, as seen in
+    # real runs (weak opponents let a candidate run to huge bb/100). A
+    # correctly-normalized blend should not let that raw scale silently
+    # dominate: candidates that trade off oppositely on the two signals
+    # should land close together, not with the big-vs_others one running away.
+    raw_results = [
+        {"vs_pro_bb100": -40.0, "vs_others_bb100": 900.0},
+        {"vs_pro_bb100": 10.0, "vs_others_bb100": 500.0},
+        {"vs_pro_bb100": 60.0, "vs_others_bb100": 100.0},
+    ]
+    combined = _combine_scores(raw_results, pro_weight=0.7)
+    assert len(combined) == 3
+    assert max(combined) - min(combined) < 3.0
+
+
+def test_combine_scores_respects_weight_direction():
+    raw_results = [
+        {"vs_pro_bb100": -40.0, "vs_others_bb100": 900.0},
+        {"vs_pro_bb100": 60.0, "vs_others_bb100": 100.0},
+    ]
+    pro_leaning = _combine_scores(raw_results, pro_weight=0.9)
+    others_leaning = _combine_scores(raw_results, pro_weight=0.1)
+    # candidate 1 has the better vs-pro result but worse vs-others: weighting
+    # toward pro should favor it more than weighting toward others does.
+    assert (pro_leaning[1] - pro_leaning[0]) > (others_leaning[1] - others_leaning[0])
 
 
 def test_run_evolution_end_to_end_and_resume(tmp_path):
