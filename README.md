@@ -19,7 +19,8 @@ env/          gymnasium.Env wrapping the engine for RL training, plus the
 agents/       Pluggable policies sharing one `act(engine, seat)` interface:
               RandomAgent, RuleBasedAgent (single Monte-Carlo-equity
               heuristic), ProAgent (structured pro-style rule system --
-              see below), RLAgent (loads a trained MaskablePPO checkpoint).
+              see below) plus its evolved variants ProAgentV2/ProAgentV3,
+              RLAgent (loads a trained MaskablePPO checkpoint).
 training/     Self-play training loop and a baseline-pool evaluator.
 inference/    `decide.py` -- feed the bot an arbitrary situation, get a
               decision back.
@@ -122,6 +123,26 @@ Use it via `main.py play --agent pro`, the dashboard's "Pro (sophisticated
 rules)" option, or directly as `ProAgent()` anywhere an `Agent` is
 expected (e.g. `inference.decide.decide(situation, agent=ProAgent())`).
 
+### Evolved variants: ProAgentV2 / ProAgentV3
+
+`training/optimize_pro_agent_v2.py` and `training/optimize_pro_agent_v3.py`
+evolve ProAgent's six highest-leverage strategy parameters (preflop
+opening, facing-a-raise, c-bet frequency, bluff-catching margin) against
+stock ProAgent and a mix of weaker fixed opponents -- v3 chains several
+rounds of that search, validating each round's winner head-to-head before
+promoting it, so the result can only improve or stay flat.
+
+`agents/pro_agent_v2.py` (`ProAgentV2`) and `agents/pro_agent_v3.py`
+(`ProAgentV3`) are ProAgent subclasses with one such search's output baked
+in as a plain params dict (not loaded from `models/` at runtime, since that
+directory is gitignored) -- so they're ready to use immediately, no need to
+re-run the optimizer. Use them exactly like `ProAgent`: `main.py evaluate
+--agent pro_v2`, `main.py play --agent pro_v3`, the dashboard's "Pro v2
+(evolved)" / "Pro v3 (evolved, chained)" options, or directly as
+`ProAgentV2()` / `ProAgentV3()`. Re-running the optimizer scripts and
+copying their `best_params.json` output into these files' `TUNED_PARAMS`
+is how you'd refresh them with a new search.
+
 ## Asking it for a decision
 
 `inference/decide.py` takes a plain description of a table state -- it
@@ -187,8 +208,9 @@ streamlit run dashboard/app.py
 ```
 
 In the sidebar, choose the agent (a trained RL checkpoint -- auto-discovered
-from `models/`, the sophisticated pro-style rule agent, the simpler rule-based
-heuristic at any aggression, or random), then in the main panel set the
+from `models/`, the sophisticated pro-style rule agent or its evolved
+ProAgentV2/ProAgentV3 variants, the simpler rule-based heuristic at any
+aggression, or random), then in the main panel set the
 number of players, blinds, button, street and
 board, each seat's stack/current bet/folded/all-in state, and the hero's
 seat and hole cards. "Get decision" runs the same `inference.decide.decide`

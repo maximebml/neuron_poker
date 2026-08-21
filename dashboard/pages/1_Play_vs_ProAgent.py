@@ -26,6 +26,8 @@ if _REPO_ROOT not in sys.path:
 import streamlit as st
 
 from agents.pro_agent import ProAgent
+from agents.pro_agent_v2 import ProAgentV2
+from agents.pro_agent_v3 import ProAgentV3
 from agents.random_agent import RandomAgent
 from agents.rule_based_agent import RuleBasedAgent
 from poker.actions import Action
@@ -38,7 +40,8 @@ st.caption("You're the hero (seat 0). Opponent seats act automatically between y
           "Any seat that busts is reloaded to the starting stack before the next hand -- "
           "this is a practice table, not a tournament.")
 
-AGENT_CHOICES = ["Pro (sophisticated rules)", "Rule-based (equity heuristic)", "Random", "Trained RL model"]
+AGENT_CHOICES = ["Pro (sophisticated rules)", "Pro v2 (evolved)", "Pro v3 (evolved, chained)",
+                "Rule-based (equity heuristic)", "Random", "Trained RL model"]
 ACTION_LABELS = {
     Action.FOLD: "Fold", Action.CHECK_CALL: "Check/Call", Action.RAISE_33: "Raise 33% pot",
     Action.RAISE_75: "Raise 75% pot", Action.RAISE_150: "Raise 150% pot", Action.ALL_IN: "All-in",
@@ -105,6 +108,10 @@ def build_agent(cfg):
             return None
         from agents.rl_agent import RLAgent
         return RLAgent(cfg["checkpoint"], deterministic=True)
+    if kind == "Pro v2 (evolved)":
+        return ProAgentV2()
+    if kind == "Pro v3 (evolved, chained)":
+        return ProAgentV3()
     return ProAgent()
 
 

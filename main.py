@@ -2,9 +2,9 @@
 
 Usage:
     python main.py train        [--timesteps N] [--n-envs N] [--min-players N] [--max-players N] ...
-    python main.py evaluate     --agent {rl,pro,rule_based,random} [--model ...] [--hands N]
+    python main.py evaluate     --agent {rl,pro,pro_v2,pro_v3,rule_based,random} [--model ...] [--hands N]
     python main.py decide       --model models/final_model.zip --situation situation.json
-    python main.py play         [--agent {rl,pro,rule_based,random}] [--model ...] [--hands N]
+    python main.py play         [--agent {rl,pro,pro_v2,pro_v3,rule_based,random}] [--model ...] [--hands N]
     python main.py optimize-pro    [--generations N] [--population-size N] ...
     python main.py optimize-pro-v2 [--generations N] [--pro-weight 0.7] ...
     python main.py optimize-pro-v3 [--iterations N] [--generations-per-iteration N] ...
@@ -61,7 +61,8 @@ def cmd_evaluate(argv):
                                       description="Evaluate an agent's bb/100 and win rate against a fixed "
                                                   "baseline opponent pool (random + 3 rule-based agents).")
     parser.add_argument("--model", type=str, default=None, help="Path to a trained MaskablePPO .zip checkpoint")
-    parser.add_argument("--agent", type=str, default=None, choices=["rl", "pro", "rule_based", "random"],
+    parser.add_argument("--agent", type=str, default=None,
+                        choices=["rl", "pro", "pro_v2", "pro_v3", "rule_based", "random"],
                         help="Which agent to evaluate, overriding the --model-presence default (implied 'rl')")
     parser.add_argument("--hands", type=int, default=2000)
     parser.add_argument("--min-players", type=int, default=2)
@@ -78,6 +79,12 @@ def cmd_evaluate(argv):
     elif agent_kind == "pro":
         from agents.pro_agent import ProAgent
         agent = ProAgent()
+    elif agent_kind == "pro_v2":
+        from agents.pro_agent_v2 import ProAgentV2
+        agent = ProAgentV2()
+    elif agent_kind == "pro_v3":
+        from agents.pro_agent_v3 import ProAgentV3
+        agent = ProAgentV3()
     elif agent_kind == "random":
         from agents.random_agent import RandomAgent
         agent = RandomAgent()
@@ -96,7 +103,8 @@ def cmd_play(argv):
     parser.add_argument("--model", type=str, default=None,
                         help="RL model controlling seat 0 (equivalent to --agent rl); "
                              "without it, seat 0 uses the rule-based baseline")
-    parser.add_argument("--agent", type=str, default=None, choices=["rl", "pro", "rule_based", "random"],
+    parser.add_argument("--agent", type=str, default=None,
+                        choices=["rl", "pro", "pro_v2", "pro_v3", "rule_based", "random"],
                         help="Explicitly pick seat 0's agent, overriding the --model-presence default")
     parser.add_argument("--num-players", type=int, default=6)
     parser.add_argument("--hands", type=int, default=5)
@@ -117,6 +125,12 @@ def cmd_play(argv):
         seat0_agent = RLAgent(args.model, deterministic=True)
     elif agent_kind == "pro":
         seat0_agent = ProAgent(rng=rng)
+    elif agent_kind == "pro_v2":
+        from agents.pro_agent_v2 import ProAgentV2
+        seat0_agent = ProAgentV2(rng=rng)
+    elif agent_kind == "pro_v3":
+        from agents.pro_agent_v3 import ProAgentV3
+        seat0_agent = ProAgentV3(rng=rng)
     elif agent_kind == "random":
         seat0_agent = RandomAgent(rng=rng)
     else:
