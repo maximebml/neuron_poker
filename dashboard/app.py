@@ -21,6 +21,8 @@ import os
 import streamlit as st
 
 from agents.pro_agent import ProAgent
+from agents.pro_agent_v2 import ProAgentV2
+from agents.pro_agent_v3 import ProAgentV3
 from agents.random_agent import RandomAgent
 from agents.rule_based_agent import RuleBasedAgent
 from inference.decide import decide
@@ -36,6 +38,7 @@ STREET_BOARD_SIZE = {"preflop": 0, "flop": 3, "turn": 4, "river": 5}
 
 st.sidebar.header("Agent")
 agent_kind = st.sidebar.radio("Agent type", ["Trained RL model", "Pro (sophisticated rules)",
+                                             "Pro v2 (evolved)", "Pro v3 (evolved, chained)",
                                              "Rule-based (equity heuristic)", "Random"])
 
 agent = None
@@ -52,6 +55,16 @@ elif agent_kind == "Pro (sophisticated rules)":
                        "classification, continuation betting, texture-aware sizing, "
                        "pot-odds play. A structured heuristic system, not a solver.")
     agent = ProAgent()
+
+elif agent_kind == "Pro v2 (evolved)":
+    st.sidebar.caption("ProAgent with its 6 highest-leverage parameters evolved by "
+                       "training/optimize_pro_agent_v2.py against stock ProAgent + a weak fixed pool.")
+    agent = ProAgentV2()
+
+elif agent_kind == "Pro v3 (evolved, chained)":
+    st.sidebar.caption("ProAgentV2 further refined by training/optimize_pro_agent_v3.py's evolutionary "
+                       "chain, each round validated head-to-head before being promoted.")
+    agent = ProAgentV3()
 
 else:
     models_dir = st.sidebar.text_input("Checkpoints directory", "models")

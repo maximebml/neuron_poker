@@ -46,6 +46,30 @@ def test_pro_agent_flow_produces_a_decision():
     assert any(m.label == "Agent" and m.value == "pro" for m in at.metric)
 
 
+def test_pro_v2_agent_flow_produces_a_decision():
+    at = AppTest.from_file(DASHBOARD_PATH)
+    at.run(timeout=30)
+    at.sidebar.radio[0].set_value("Pro v2 (evolved)").run(timeout=30)
+    _fill_flop_hand(at)
+    at.button[0].click().run(timeout=30)
+
+    assert not at.exception
+    assert len(at.success) == 1
+    assert any(m.label == "Agent" and m.value == "pro_v2" for m in at.metric)
+
+
+def test_pro_v3_agent_flow_produces_a_decision():
+    at = AppTest.from_file(DASHBOARD_PATH)
+    at.run(timeout=30)
+    at.sidebar.radio[0].set_value("Pro v3 (evolved, chained)").run(timeout=30)
+    _fill_flop_hand(at)
+    at.button[0].click().run(timeout=30)
+
+    assert not at.exception
+    assert len(at.success) == 1
+    assert any(m.label == "Agent" and m.value == "pro_v3" for m in at.metric)
+
+
 def test_random_agent_flow_produces_a_decision():
     at = AppTest.from_file(DASHBOARD_PATH)
     at.run(timeout=30)
