@@ -8,4 +8,6 @@ tensorboard_log/
 training_run.log
 pro_agent_optimization.log
 pro_agent_optimization_v2.log
+pro_agent_v2_optimization.log
+pro_agent_v3_chain.log
 
